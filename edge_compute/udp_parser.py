@@ -1,5 +1,7 @@
 import socket
 import struct
+import threading
+from kafka_producer import kafkaMonster
 
 # Define the structure for the packet header based on the PDF
 # Each packet starts with this header.
@@ -79,20 +81,12 @@ class PacketCarTelemetryData:
                 self.m_carTelemetryData.append(CarTelemetryData(car_data))
             start_byte = end_byte
 
-def main():
+def main(car_topic):
     """
     Listens for F1 25 UDP telemetry packets and prints the player's car speed.
     """
-    # Standard F1 game UDP port
     udp_port = 20777
-    
-    # Create a UDP socket
-    # AF_INET for IPv4
-    # SOCK_DGRAM for UDP
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    
-    # Bind the socket to the port. 
-    # An empty string for the IP address means it will listen on all available interfaces.
     try:
         sock.bind(("0.0.0.0", udp_port))
         print(f"Listening for F1 25 telemetry on port {udp_port}...")
@@ -101,33 +95,32 @@ def main():
         print(e)
         return
 
-    # Main loop to receive and process data
     while True:
         data, _ = sock.recvfrom(60577)
         # print(".",end="", flush=True)
         try:
-            # Receive data from the socket. Buffer size is set to a value large enough for the biggest packet.
-            
-            # Unpack just the packet ID from the header to check the packet type
-            # The packetId is the 6th byte (index 5)
             header = PacketHeader(data[:PACKET_HEADER_FORMAT.size])
             # print(f"+{header.m_packetId}",end="", flush=True)
-
-            # Check if the packet is a Car Telemetry packet
             if header.m_packetId == PacketCarTelemetryData.PACKET_ID:
                 print("*",end="", flush=True)
                 telemetry_packet = PacketCarTelemetryData(data)
-                
-                # Get the index of the player's car from the header
                 player_car_index = telemetry_packet.m_header.m_playerCarIndex
                 # print("Player car information : Car", player_car_index)
-                
-                # Get the telemetry data for the player's car
                 player_car_telemetry = telemetry_packet.m_carTelemetryData[player_car_index]
-                
-                # Print the player's car speed
-
                 print(f"Speed: {player_car_telemetry.m_speed} km/h ,Gear: {player_car_telemetry.m_gear}, Throttle: {player_car_telemetry.m_throttle*100}%, Brake: {player_car_telemetry.m_brake*100}%")
+
+                speed = player_car_telemetry.m_speed
+                gear = player_car_telemetry.m_gear
+                throttle = player_car_telemetry.m_throttle * 100
+                brake = player_car_telemetry.m_brake * 100
+                status = car_topic.produce(key=str(player_car_index),value={
+                    "speed": speed,
+                    "gear": gear,
+                    "throttle": throttle,
+                    "brake": brake
+                })
+                if status is not True:
+                    print("Failed to produce to kafka")
 
                 # print("----")
                 # print("other car information: ")
@@ -150,5 +143,11 @@ def main():
             continue
 
 if __name__ == "__main__":
-    main()
+    car_topic = kafkaMonster("car_telemetry",loglevel="DEBUG")
+    main(car_topic)
+    # t = threading.Thread(target=main, args=(car_topic,), daemon=True)
+    # t.start()
+    # dashboard.run()
+    
+    car_topic.flusher()
     print("BYE")

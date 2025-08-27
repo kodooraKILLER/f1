@@ -1,0 +1,18 @@
+[project]
+name = "f1-edge-compute"
+version = "1.0.0"
+description = "A python microservice that handles UDP message-parsing, kafka-production and local-dash-render for the F1-25 game"
+authors = [
+    {name = "kodooraKILLER",email = "senthilkumarramasamy775@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.9,<4"
+dependencies = [
+    "quixstreams (>=3.22.0,<4.0.0)",
+    "pyopenssl (>=25.1.0,<26.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
