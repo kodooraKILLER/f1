@@ -2,11 +2,16 @@ import socket
 import struct
 import threading
 from kafka_producer import kafkaMonster
+import datetime
+import os
+
 
 # Define the structure for the packet header based on the PDF
 # Each packet starts with this header.
 PACKET_HEADER_FORMAT = struct.Struct('<HBBBBBQfIIBB')
 CAR_TELEMETRY_FORMAT = struct.Struct('<HfffBbHBBH4H4B4BH4f4B')
+timestamp = datetime.datetime.now().strftime("%y%m%d%H%M")
+OUTPUT_FILE = f"udp_captured_data_{timestamp}.log"
 class PacketHeader:
     def __init__(self, data):
         # Unpack the header data using the format string
@@ -81,11 +86,11 @@ class PacketCarTelemetryData:
                 self.m_carTelemetryData.append(CarTelemetryData(car_data))
             start_byte = end_byte
 
-def main(car_topic):
+def main(car_topic,save_data=False):
     """
     Listens for F1 25 UDP telemetry packets and prints the player's car speed.
     """
-    udp_port = 20777
+    udp_port = 6969
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.bind(("0.0.0.0", udp_port))
@@ -94,9 +99,34 @@ def main(car_topic):
         print(f"Error: Could not bind to port {udp_port}. Is another application using it?")
         print(e)
         return
+    if save_data:
+        print(f"Data will be saved to '{OUTPUT_FILE}'")
+        # Open the output file in append mode, creating it if it doesn't exist
+        # 'wb' for writing bytes, 'a' for appending text
+        # We'll save each packet as a separate line, preceded by a timestamp
+        try:
+            with open(OUTPUT_FILE, 'ab') as f_out: # Use 'ab' for append binary mode
+                # Optional: Write a header to the file
+                header = f"--- UDP Capture Started: {datetime.datetime.now()} ---\n".encode('utf-8')
+                f_out.write(header)
+                print("Output file opened successfully.")
+        except IOError as e:
+            print(f"Error opening output file for writing: {e}")
+            return # Exit if we can't open the file
+
 
     while True:
         data, _ = sock.recvfrom(60577)
+        if save_data:
+            try:
+                timestamp = datetime.datetime.now().isoformat()
+                with open(OUTPUT_FILE, 'ab') as f_out: # Open in append binary mode each time to ensure atomicity
+                    # Format: timestamp_length_of_data_actual_data_newline
+                    # This format helps in later parsing
+                    line_to_write = f"{timestamp}:::LEN={len(data)}:::".encode('utf-8') + data + b'\n'
+                    f_out.write(line_to_write)
+            except IOError as e:
+                print(f"Error writing to output file: {e}")
         # print(".",end="", flush=True)
         try:
             header = PacketHeader(data[:PACKET_HEADER_FORMAT.size])
@@ -105,7 +135,7 @@ def main(car_topic):
                 print("*",end="", flush=True)
                 telemetry_packet = PacketCarTelemetryData(data)
                 player_car_index = telemetry_packet.m_header.m_playerCarIndex
-                # print("Player car information : Car", player_car_index)
+                print("Player car information : Car", player_car_index)
                 player_car_telemetry = telemetry_packet.m_carTelemetryData[player_car_index]
                 print(f"Speed: {player_car_telemetry.m_speed} km/h ,Gear: {player_car_telemetry.m_gear}, Throttle: {player_car_telemetry.m_throttle*100}%, Brake: {player_car_telemetry.m_brake*100}%")
 
@@ -144,7 +174,7 @@ def main(car_topic):
 
 if __name__ == "__main__":
     car_topic = kafkaMonster("car_telemetry",loglevel="DEBUG")
-    main(car_topic)
+    main(car_topic,save_data=True)
     # t = threading.Thread(target=main, args=(car_topic,), daemon=True)
     # t.start()
     # dashboard.run()

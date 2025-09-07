@@ -1,0 +1,17 @@
+[project]
+name = "flink"
+version = "1.0.0"
+description = "A python microservice that uses apache flink to analyse real-time race-data"
+authors = [
+    {name = "kodooraKILLER",email = "senthilkumarramasamy775@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "apache-flink (>=2.1.0,<3.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
