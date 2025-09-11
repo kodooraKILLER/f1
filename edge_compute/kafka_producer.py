@@ -12,7 +12,7 @@ def create_json_message():
     data = {
         "player_car_index": random.randint(0, 9),
         "fuel_in_tank": round(random.uniform(0, 100), 2),
-        "time": round(time.time(), 2)
+        "event_ts": time.time()
     }
     return data
 

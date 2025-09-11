@@ -1,14 +1,28 @@
-from pyflink.common import Row,Time
+from pyflink.common import Row,Duration
 from pyflink.datastream import StreamExecutionEnvironment
-from pyflink.common.watermark_strategy import WatermarkStrategy
+from pyflink.common.watermark_strategy import WatermarkStrategy,TimestampAssigner
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.datastream.window import SlidingProcessingTimeWindows 
 from pyflink.datastream.functions import ProcessWindowFunction,SourceFunction
 from pyflink.common.typeinfo import Types
+# from pyflink.datastream.functions import 
 from pyflink.datastream.connectors.kafka import KafkaSource,KafkaOffsetsInitializer
 import socket
 import json
 BURN_WINDOW = 0.5
+FIELD={
+    "event_ts":2
+}
+class FirstElementTimestampAssigner(TimestampAssigner):
+    def __init__(self):
+        pass
+        # super.__init__(TimestampAssigner())
+
+
+    def extract_timestamp(self, row, record_timestamp):
+        print("RSK",row,record_timestamp)
+        return int(row[FIELD["event_ts"]]*1000)
+
 def get_source():
     source = KafkaSource.builder()\
     .set_bootstrap_servers("localhost:9092")\
@@ -46,32 +60,28 @@ def fuel_monitor():
     datastream = env.from_source(
         kafka_source, WatermarkStrategy.no_watermarks(), "Kafka"
     )
-    datastream.print()
-    # row_type_info = Types.ROW_NAMED([Types.INT(), Types.FLOAT(), Types.FLOAT()], 
-    #                          ["player_car_index", "fuel_in_tank", "time"])
-    # mapped_stream = datastream.map(
-    #     lambda x: Row(**json.loads(x)),
-    #     output_type=row_type_info
-    # )
-    # keyed_stream = mapped_stream.key_by(lambda x: 1)
-    # max_stream = keyed_stream.window(SlidingProcessingTimeWindows.of(Time.seconds(10), Time.seconds(5))).max("player_car_index")
-    # max_stream.print()
+    # datastream.print()
+
+    mapped_stream = datastream.map(
+        lambda x: Row(
+            json.loads(x)["player_car_index"],
+            json.loads(x)["fuel_in_tank"],
+            json.loads(x)["event_ts"]
+        ),
+        output_type=Types.ROW_NAMED(
+        ["player_car_index", "fuel_in_tank", "event_ts"],
+        [Types.INT(), Types.DOUBLE(), Types.DOUBLE()]
+    )
+    )
+    
+    # datastream.print()
+    # mapped_stream.print()
+    timestamp_strategy = WatermarkStrategy.for_monotonous_timestamps().with_timestamp_assigner(FirstElementTimestampAssigner())
+    datastream_with_timestamps = mapped_stream.assign_timestamps_and_watermarks(timestamp_strategy)
+    datastream_with_timestamps.print()
+
     env.execute("Fuel Monitor Job")
     
-    # time_marked_stream = mapped_stream.assign_timestamps_and_watermarks(
-    #     WatermarkStrategy.for_monotonous_timestamps()
-    #     .with_timestamp_assigner(lambda row,record_timestamp: row["session_time"])
-    # )
-
-#     sliding_stream = time_marked_stream.key_by(lambda row: row["car_index"])\
-#     .window(SildingEventTimeWindows.of(Time.seconds(BURN_WINDOW),Time.seconds(BURN_WINDOW)))\
-#     .process(
-#         FuelConsumptionCalculator()
-#         ,output_type = Types.ROW_NAMED(
-#                         ["car_index","fuel_burn_rate","category"],
-#                         [Types.INT(),Types.FLOAT(),Types.STRING()]
-#                         )
-#     )
 
 #     sliding_stream.print()
 
