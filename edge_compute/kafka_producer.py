@@ -5,13 +5,13 @@ import random
 import time
 from kafka import KafkaProducer
 
-def create_json_message():
+def create_json_message(fuelval):
     """
     Generates a dictionary with random data in the specified format.
     """
     data = {
-        "player_car_index": random.randint(0, 9),
-        "fuel_in_tank": round(random.uniform(0, 100), 2),
+        "player_car_index": 0,#random.randint(0, 9),
+        "fuel_in_tank": fuelval,
         "event_ts": time.time()
     }
     return data
@@ -41,10 +41,13 @@ def produce_messages():
 
         print(f"Connected to Kafka broker at {bootstrap_servers}")
         print(f"Producing messages to topic '{topic_name}'...")
-
+        fuelval = 100
         # Produce messages in a continuous loop.
         while True:
-            message = create_json_message()
+            message = create_json_message(fuelval)
+            fuelval -=round(random.uniform(0, 5), 2)
+            if fuelval<=0:
+                fuelval = 100
             
             # Send the message to the Kafka topic.
             producer.send(topic_name, value=message)

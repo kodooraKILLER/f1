@@ -1,26 +1,112 @@
-from pyflink.common import Row,Duration
+from pyflink.common import Row
+from pyflink.common import Time
+import time
 from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.common.watermark_strategy import WatermarkStrategy,TimestampAssigner
 from pyflink.common.serialization import SimpleStringSchema
-from pyflink.datastream.window import SlidingProcessingTimeWindows 
-from pyflink.datastream.functions import ProcessWindowFunction,SourceFunction
+from pyflink.datastream.window import SlidingEventTimeWindows 
+from pyflink.datastream.functions import AggregateFunction
 from pyflink.common.typeinfo import Types
-# from pyflink.datastream.functions import 
-from pyflink.datastream.connectors.kafka import KafkaSource,KafkaOffsetsInitializer
+from pyflink.datastream.connectors.kafka import KafkaSource,KafkaOffsetsInitializer,KafkaSink
 import socket
 import json
 BURN_WINDOW = 0.5
 FIELD={
-    "event_ts":2
+    "player_car_index":0,
+    "fuel_in_tank":1,
+    "event_ts":2,
 }
+
+class FuelAggregator(AggregateFunction): 
+
+    def create_accumulator(self):
+        latest_ts = None
+        start_ts = None
+        latest_fuel = None
+        start_fuel = None
+        count = 0
+        return start_fuel,latest_fuel,start_ts,latest_ts,count
+
+    def add(self, value, accumulator):
+        latest_ts = accumulator[3]
+        start_ts = accumulator[2]
+        latest_fuel = accumulator[1]
+        start_fuel = accumulator[0]
+        count = accumulator[4]
+        
+        if start_fuel is None:
+            print("RSK START",value,accumulator)    
+            return value[FIELD["fuel_in_tank"]],value[FIELD["fuel_in_tank"]],value[FIELD["event_ts"]],value[FIELD["event_ts"]],1
+        if latest_ts <= value[FIELD["event_ts"]]:
+            print("RSK LATEST",value,accumulator)    
+            return start_fuel,value[FIELD["fuel_in_tank"]],start_ts,value[FIELD["event_ts"]],count+1
+        if start_ts >= value[FIELD["event_ts"]]:
+            print("RSK EARLIEST",value,accumulator)
+            return value[FIELD["fuel_in_tank"]],latest_fuel,value[FIELD["event_ts"]],latest_ts,count+1
+        print("RSK BLEH",value,accumulator)
+        return start_fuel,latest_fuel,start_ts,latest_ts,count+1
+        
+
+    def get_result(self, accumulator):
+        latest_ts = accumulator[3]
+        start_ts = accumulator[2]
+        latest_fuel = accumulator[1]
+        start_fuel = accumulator[0]
+        counter = accumulator[4]
+        if latest_ts is None:
+            print("RSK <> 69 EMPTY")
+            return None
+        if start_ts==latest_ts:
+            print("RSK << 69 SINGLE",counter)
+            return None
+        print("RSK << 69 CALC")
+        fuel_burn_rate = (start_fuel-latest_fuel)*1000/((latest_ts-start_ts))
+        print("RSK <}",fuel_burn_rate,latest_ts,counter)
+        return Row(
+            fuel_burn=fuel_burn_rate,
+            event_ts=latest_ts,
+            cnt=counter
+            )
+
+    def merge(self, a,b):
+        if a[0] is None:
+            return b
+        if b[0] is None:
+            return a
+        
+        if a[3]>=b[3]:
+            g = a[1]
+            y = a[3]
+        else:
+            g = b[1]
+            y = b[3]
+        
+        if a[2]<=b[2]:
+            f = a[0]
+            x = a[2]
+        else:
+            f = b[0]
+            x = b[2]
+
+        cnt = a[4]+b[4]
+        return f,g,x,y,cnt
+
+
+
+
+def parse_fuel_event(event):
+    event_json = json.loads(event)
+    return Row(
+            event_json["player_car_index"],
+            event_json["fuel_in_tank"],
+            event_json["event_ts"]
+        ),
 class FirstElementTimestampAssigner(TimestampAssigner):
     def __init__(self):
         pass
-        # super.__init__(TimestampAssigner())
 
 
     def extract_timestamp(self, row, record_timestamp):
-        print("RSK",row,record_timestamp)
         return int(row[FIELD["event_ts"]]*1000)
 
 def get_source():
@@ -36,6 +122,8 @@ def get_source():
 
 def fuel_monitor():
     env = StreamExecutionEnvironment.get_execution_environment()
+    env.set_parallelism(1)
+    env.set_buffer_timeout(0) 
     current_dir_list = __file__.split("/")[:-1]
     current_dir = "/".join(current_dir_list)
     print(f"Current directory: {current_dir}")  
@@ -74,31 +162,48 @@ def fuel_monitor():
     )
     )
     
-    # datastream.print()
-    # mapped_stream.print()
     timestamp_strategy = WatermarkStrategy.for_monotonous_timestamps().with_timestamp_assigner(FirstElementTimestampAssigner())
     datastream_with_timestamps = mapped_stream.assign_timestamps_and_watermarks(timestamp_strategy)
-    datastream_with_timestamps.print()
-
-    env.execute("Fuel Monitor Job")
+    # datastream_with_timestamps.print()
     
 
-#     sliding_stream.print()
+    sliding_stream = datastream_with_timestamps.key_by(lambda x: x[FIELD["player_car_index"]])\
+                        .window(SlidingEventTimeWindows.of(Time.seconds(3), Time.milliseconds(500)))
+    
+    stream_of_aggregates = sliding_stream.aggregate(
+        FuelAggregator(),
+        accumulator_type=Types.TUPLE([Types.DOUBLE(), Types.DOUBLE(),Types.DOUBLE(), Types.DOUBLE()]),
+        output_type=Types.ROW_NAMED(["fuel_burn", "event_ts","cnt"], [Types.DOUBLE(), Types.DOUBLE(),Types.DOUBLE()]))
+    
+    stream_of_aggregates.print()
+    
+    # kafka_sink = KafkaSink.builder().set_bootstrap_servers("localhost:9092").set_topic("fuel_burn_rate").set_key_serializer(SimpleStringSchema())\
+    # .set_value_serializer(SimpleStringSchema())\
+    # .set_starting_offsets_initializer(KafkaOffsetsInitializer.earliest())\
+    # .build()
+    
+    # stream_of_aggregates.sink_to(kafka_sink)
 
-# class FuelConsumptionCalculator(ProcessWindowFunction):
-#     def process(self,key,context,elements):
-#         sorted_elements = sorted(list(elements),key=lambda x:x["session_time"])
-#         if len(sorted_elements)>1:
-#             first = sorted_elements[0]
-#             last= sorted_elements[-1]
-#             time_diff = last["session_time"] - first["session_time"]
-#             fuel_diff = time_diff = first["fuel_in_tank"] - last["fuel_in_tank"]
-#             if time_diff<=0:
-#                 yield Row(car_index=key,fuel_burn_rate=0.0,category="Unknown")
-#             else:
-#                 yield Row(car_index=key,fuel_burn_rate=fuel_diff/time_diff,category="Unknown")
-#         else:
-#             yield Row(car_index=key,fuel_burn_rate=0.0,category="Unknown")
+    job_client = env.execute_async("Fuel Monitor Job")
+    print(f"Job ID: {job_client.get_job_id()}")
+    return job_client
+    
+
 
 if __name__ == "__main__":
-    fuel_monitor()
+    try:
+        job_client = fuel_monitor()
+        while True:
+            status = job_client.get_job_status()
+            print(f"Job Status: {status}")
+            # If the job is in a final state, exit the loop
+            if status in ["FINISHED", "CANCELED", "FAILED"]:
+                break
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nStopping job...")
+        try:
+            job_client.cancel()
+            print("Job canceled successfully.")
+        except Exception as e:
+            print(f"Failed to cancel job: {e}")
