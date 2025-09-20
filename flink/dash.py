@@ -5,7 +5,7 @@ import time
 
 def get_kafka_consumer():
     return KafkaConsumer(
-        'fuel_burn_rate',
+        'fuel-burner',
         bootstrap_servers=['localhost:9092'],
         auto_offset_reset='latest',
         value_deserializer=lambda x: x.decode('utf-8')
@@ -30,6 +30,7 @@ with live_data_container:
     st.header("Current Fuel Burn Rate")
     # Use a metric to display the value prominently
     metric_box = st.metric(label="Fuel Burn Rate", value="Waiting for data...", delta=None)
+    ts_box = st.metric(label="Timestamp", value="Waiting for data...", delta=None)
 
 # Get the consumer instance
 consumer = get_kafka_consumer()
@@ -38,10 +39,14 @@ try:
     # Continuously poll for messages and update the display
     for message in consumer:
         try:
-            fuel_rate = float(message.value)
+            json_data = json.loads(message.value)
+            fuel_rate = json_data.get("fuel_burn")
+            event_ts = json_data.get("event_ts")
+            timedelta = time.time() - event_ts
             
             # Update the metric with the new value
             metric_box.metric(label="Fuel Burn Rate (L/s)", value=f"{fuel_rate:.2f}", delta=None)
+            ts_box.metric(label="timedelta", value=f"{timedelta:.2f}", delta=None)
             
         except (ValueError, TypeError) as e:
             st.error(f"Error parsing message: {e}")

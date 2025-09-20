@@ -4,7 +4,7 @@ import json
 import random
 import time
 from kafka import KafkaProducer
-
+FREQUENCY_PER_SECOND = 30
 def create_json_message(fuelval):
     """
     Generates a dictionary with random data in the specified format.
@@ -55,7 +55,7 @@ def produce_messages():
             print(f"Sent: {message}")
             
             # Wait for 1 second before sending the next message.
-            time.sleep(1)
+            time.sleep(1/FREQUENCY_PER_SECOND)
             
     except Exception as e:
         print(f"An error occurred: {e}")

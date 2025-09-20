@@ -7,7 +7,7 @@ from pyflink.common.serialization import SimpleStringSchema
 from pyflink.datastream.window import SlidingEventTimeWindows 
 from pyflink.datastream.functions import AggregateFunction
 from pyflink.common.typeinfo import Types
-from pyflink.datastream.connectors.kafka import KafkaSource,KafkaOffsetsInitializer,KafkaSink
+from pyflink.datastream.connectors.kafka import KafkaSource,KafkaOffsetsInitializer,KafkaSink,KafkaRecordSerializationSchema
 import socket
 import json
 BURN_WINDOW = 0.5
@@ -16,6 +16,14 @@ FIELD={
     "fuel_in_tank":1,
     "event_ts":2,
 }
+
+def json_to_row(json_str):
+    ele = json.loads(json_str)
+    return Row(
+            ele["player_car_index"],
+            ele["fuel_in_tank"],
+            ele["event_ts"]
+        )
 
 class FuelAggregator(AggregateFunction): 
 
@@ -109,15 +117,6 @@ class FirstElementTimestampAssigner(TimestampAssigner):
     def extract_timestamp(self, row, record_timestamp):
         return int(row[FIELD["event_ts"]]*1000)
 
-def get_source():
-    source = KafkaSource.builder()\
-    .set_bootstrap_servers("localhost:9092")\
-    .set_topics("car_status_telemetry")\
-    .set_key_deserializer(SimpleStringSchema())\
-    .set_value_deserializer(SimpleStringSchema())\
-    .set_starting_offsets_initializer(KafkaOffsetsInitializer.earliest())\
-    .build()
-    return source
 
 
 def fuel_monitor():
@@ -151,11 +150,7 @@ def fuel_monitor():
     # datastream.print()
 
     mapped_stream = datastream.map(
-        lambda x: Row(
-            json.loads(x)["player_car_index"],
-            json.loads(x)["fuel_in_tank"],
-            json.loads(x)["event_ts"]
-        ),
+        lambda x: json_to_row(x),
         output_type=Types.ROW_NAMED(
         ["player_car_index", "fuel_in_tank", "event_ts"],
         [Types.INT(), Types.DOUBLE(), Types.DOUBLE()]
@@ -168,21 +163,30 @@ def fuel_monitor():
     
 
     sliding_stream = datastream_with_timestamps.key_by(lambda x: x[FIELD["player_car_index"]])\
-                        .window(SlidingEventTimeWindows.of(Time.seconds(3), Time.milliseconds(500)))
+                        .window(SlidingEventTimeWindows.of(Time.seconds(1), Time.milliseconds(200)))
     
     stream_of_aggregates = sliding_stream.aggregate(
         FuelAggregator(),
         accumulator_type=Types.TUPLE([Types.DOUBLE(), Types.DOUBLE(),Types.DOUBLE(), Types.DOUBLE()]),
         output_type=Types.ROW_NAMED(["fuel_burn", "event_ts","cnt"], [Types.DOUBLE(), Types.DOUBLE(),Types.DOUBLE()]))
     
-    stream_of_aggregates.print()
     
-    # kafka_sink = KafkaSink.builder().set_bootstrap_servers("localhost:9092").set_topic("fuel_burn_rate").set_key_serializer(SimpleStringSchema())\
-    # .set_value_serializer(SimpleStringSchema())\
-    # .set_starting_offsets_initializer(KafkaOffsetsInitializer.earliest())\
-    # .build()
-    
-    # stream_of_aggregates.sink_to(kafka_sink)
+
+    kafka_sink = (
+        KafkaSink.builder()
+        .set_bootstrap_servers("localhost:9092")
+        .set_record_serializer(
+            KafkaRecordSerializationSchema.builder()
+                .set_topic("fuel-burner")
+                .set_value_serialization_schema(SimpleStringSchema())
+                .build()
+            )
+        .build()
+    )
+    result_stream = stream_of_aggregates.map(lambda x: f'{{"fuel_burn": {x["fuel_burn"]}, "event_ts": {x["event_ts"]}}}', output_type=Types.STRING())
+    result_stream.print()
+        
+    result_stream.sink_to(kafka_sink)
 
     job_client = env.execute_async("Fuel Monitor Job")
     print(f"Job ID: {job_client.get_job_id()}")
